@@ -1,7 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { BookOpen, FileText, Brain, Sparkles } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { BookOpen, FileText, Brain, Sparkles, History, LogIn, LogOut } from 'lucide-react';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import { saveToHistory, getHistory } from '@/lib/history';
 import ReactMarkdown from 'react-markdown';
 import QuizComponent from '@/components/QuizComponent';
 import FlashcardComponent from '@/components/FlashcardComponent';
@@ -25,6 +28,26 @@ export default function Home() {
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      setUser(user);
+      if (user) {
+        const data = await getHistory();
+        setHistory(data);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignIn = () => {
+    const provider = new GoogleAuthProvider();
+    signInWithPopup(auth, provider);
+  };
+  const handleSignOut = () => signOut(auth);
 
 
 
@@ -73,12 +96,17 @@ export default function Home() {
 
       if (activeTab === 'quiz') {
         setQuizQuestions(data.questions || []);
+        await saveToHistory('quiz', input, data.questions);
       } else if (activeTab === 'flashcards') {
         setFlashcards(data.cards || []);
+        await saveToHistory('flashcards', input, data.cards);
       } else {
         const resultText = data.explanation || data.summary;
         setResult(resultText);
+        await saveToHistory(activeTab, input, resultText);
       }
+      const updated = await getHistory();
+      setHistory(updated);
     } catch (error: any) {
       setResult(`Error: ${error.message}`);
     } finally {
@@ -96,18 +124,40 @@ export default function Home() {
     setInput('');
   };
 
+  const loadHistoryItem = (item: any) => {
+    setActiveTab(item.type);
+    setInput(item.input);
+    if (item.type === 'quiz') {
+      setQuizQuestions(item.output);
+    } else if (item.type === 'flashcards') {
+      setFlashcards(item.output);
+    } else {
+      setResult(item.output);
+    }
+  };
+
   const tabs = [
     { id: 'explain', label: 'Explain Concept', icon: Brain },
     { id: 'summarize', label: 'Summarize Notes', icon: FileText },
     { id: 'quiz', label: 'Generate Quiz', icon: BookOpen },
     { id: 'flashcards', label: 'Flashcards', icon: Sparkles },
+    { id: 'history', label: 'History', icon: History },
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-indigo-600">AI Study Buddy</h1>
+          {user ? (
+            <button onClick={handleSignOut} className="flex items-center gap-2 px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+              <LogOut size={18} /> Sign Out
+            </button>
+          ) : (
+            <button onClick={handleSignIn} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              <LogIn size={18} /> Sign In
+            </button>
+          )}
         </div>
       </nav>
 
@@ -121,6 +171,7 @@ export default function Home() {
                   key={tab.id}
                   onClick={() => {
                     setActiveTab(tab.id);
+                    setInput('');
                     setResult('');
                     setQuizQuestions([]);
                     setFlashcards([]);
@@ -138,7 +189,29 @@ export default function Home() {
             })}
           </div>
 
-          {activeTab === 'quiz' && quizQuestions.length > 0 ? (
+          {activeTab === 'history' ? (
+            <div>
+              <h2 className="text-xl font-bold mb-4">Your History</h2>
+              {!user ? (
+                <p className="text-gray-600">Please sign in to view history</p>
+              ) : history.length === 0 ? (
+                <p className="text-gray-600">No history yet</p>
+              ) : (
+                <div className="space-y-4">
+                  {history.map((item: any) => (
+                    <div key={item.id} className="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer" onClick={() => loadHistoryItem(item)}>
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-semibold text-indigo-600 capitalize">{item.type}</span>
+                        <span className="text-sm text-gray-500">{new Date(item.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="text-sm text-gray-700 mb-2"><strong>Input:</strong> {item.input}</p>
+                      <p className="text-sm text-gray-600"><strong>Output:</strong> {typeof item.output === 'string' ? item.output.substring(0, 150) + '...' : JSON.stringify(item.output).substring(0, 150) + '...'}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'quiz' && quizQuestions.length > 0 ? (
             <QuizComponent questions={quizQuestions} onRestart={handleQuizRestart} />
           ) : activeTab === 'flashcards' && flashcards.length > 0 ? (
             <FlashcardComponent cards={flashcards} onRestart={handleFlashcardRestart} />
